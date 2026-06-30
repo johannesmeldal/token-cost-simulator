@@ -1,0 +1,496 @@
+{
+  "project": {
+    "name": "AI Governance Simulator",
+    "version": "2.0",
+    "purpose": "Interaktivt simuleringsverktøy som lar interessenter i Avinor utforske og sammenligne ulike governance-modeller for GitHub Copilot token-fakturering. Verktøyet skal gjøre abstrakte styringsvalg konkrete og synlige, og støtte beslutningsprosessen i Discover/Develop-fasene av Double Diamond."
+  },
+
+  "designPrinciples": {
+    "style": "Modern enterprise SaaS — GitHub/Vercel-estetikk",
+    "theme": "Mørk/lys modus, minimalistisk, card-baserte dashboards, tydelig informasjonshierarki",
+    "layout": "Responsivt nettgrensesnitt: venstre navigasjonsmeny, topptoolbar med rollebytte og simuleringskontroller, hoveddashboard-område",
+    "philosophy": "Prioriter visuell forståelse over teknisk presisjon. Appen er et pedagogisk verktøy, ikke et regnskapsystem.",
+    "roleSwitching": "Rollebytte skal skje via en synlig dropdown i toppmenyen uten innlogging — for å lette live-demonstrasjon i workshops"
+  },
+
+  "roles": [
+    {
+      "id": "org_admin",
+      "name": "Org Admin",
+      "level": 1,
+      "description": "Administrator for hele organisasjonen. Oppretter team, utpeker Team Admins, setter organisasjonsbudsjett og konfigurerer governance-policyer.",
+      "scopeOf": "Hele organisasjonen",
+      "canDo": [
+        "Se samlet tokenbruk og kostnad for hele organisasjonen",
+        "Sette og endre organisasjonens totale budsjett",
+        "Opprette, redigere og slette team",
+        "Utpeke en bruker som Team Admin for et gitt team (tildeler Role 2)",
+        "Se alle teams kvoteutnyttelse (med og uten toggle)",
+        "Se alle individuelle brukeres tokenbruk (med personverntoggle)",
+        "Sette standard individkvote for nye brukere",
+        "Overstyre individkvote for enkeltbrukere (uavhengig av modell)",
+        "Konfigurere aktive governance-policyer (lag 1–4)",
+        "Velge håndhevelsesmodus (soft/hard limits)",
+        "Styre hva Team Admins og Developers kan se (transparency-innstillinger)",
+        "Aktivere/deaktivere chargeback-rapportering"
+      ],
+      "privacyToggles": [
+        "Vis/skjul individuell bruk for Org Admin selv",
+        "Tillat/nekt Team Admins å se individuelle navn vs. anonymisert visning",
+        "Tillat/nekt Developers å se andres individuelle forbruk i teamet",
+        "Vis/skjul kostnadsattribusjon per person (chargeback-synlighet)"
+      ]
+    },
+    {
+      "id": "team_admin",
+      "name": "Team Admin",
+      "level": 2,
+      "description": "Administrator for ett spesifikt team. Kan være seksjonsleder, tech lead eller prosjektansvarlig — rollen fungerer likt uavhengig av teamtype. Utpekes av Org Admin og administrerer sitt team innenfor rammene Org Admin har satt.",
+      "scopeOf": "Eget team",
+      "canDo": [
+        "Se teamets samlede tokenbruk og kvoteutnyttelse",
+        "Legge til og fjerne brukere/utviklere i eget team",
+        "Sette kvoter for enkeltbrukere i eget team (innenfor teamets tildelte budsjett)",
+        "Flytte brukere mellom team (med godkjenning fra Org Admin, eller direkte om policy tillater)",
+        "Se live tokenbruk per bruker i eget team (med personverntoggle)",
+        "Varsle eller blokkere brukere som nærmer seg grense (avhengig av håndhevelsesmodus)",
+        "Se trendanalyse og prognose for teamets forbruk",
+        "Motta varsler ved budsjett- eller kvoteutnyttelse"
+      ],
+      "privacyToggles": [
+        "Vis/skjul individuelle brukernavn vs. anonymisert visning (innenfor eget team)",
+        "Vis/skjul kostnadsattribusjon per teammedlem"
+      ],
+      "constraints": [
+        "Kan kun se og administrere eget team",
+        "Kan ikke opprette nye team",
+        "Kan ikke overstige teamets tildelte budsjett når individkvoter settes",
+        "Transparency-innstillinger arver fra Org Admin (kan ikke utvide sine egne rettigheter)"
+      ]
+    },
+    {
+      "id": "developer",
+      "name": "Developer",
+      "level": 3,
+      "description": "Vanlig GitHub Copilot-bruker. Ser sitt eget forbruk og sin status i teamet og organisasjonen, avhengig av hvilke governance-policyer og transparency-innstillinger som er aktive.",
+      "scopeOf": "Seg selv + begrenset teaminnsyn",
+      "canDo": [
+        "Se eget tokenforbruk og kostnadsestimat",
+        "Se gjenværende personlig kvote (om individuelle kvoter er aktivert)",
+        "Se teamets samlede kvote og forbruk (aggregert)",
+        "Se organisasjonens overordnede status (prosentvis forbruk mot budsjett)",
+        "Motta advarsler ved 75%, 90% og 100% av personlig kvote",
+        "Se egen aktivitetslogg (innsendte prompts, agentsesjoner etc.)"
+      ],
+      "conditionalAccess": [
+        {
+          "condition": "individualUsageVisible er aktivert av Team Admin/Org Admin",
+          "access": "Kan se navngitte teammedlemmers individuelle forbruk"
+        },
+        {
+          "condition": "individualUsageVisible er deaktivert",
+          "access": "Ser kun anonymiserte eller aggregerte teamtall"
+        },
+        {
+          "condition": "chargebackVisible er aktivert",
+          "access": "Ser kostnadsattribusjon for eget forbruk"
+        }
+      ]
+    }
+  ],
+
+  "governanceLayers": {
+    "description": "Governance-modellen er ikke ett valg men fire kombinérbare lag. Hvert lag kan aktiveres/deaktiveres uavhengig, og kombinasjonen definerer det totale styringsregimet.",
+
+    "layer1_budgetStructure": {
+      "name": "Budsjettstruktur — Hvor sitter budsjettet?",
+      "description": "Definerer på hvilke nivåer det finnes kvote- eller budsjettgrenser. Disse kan kombineres.",
+      "models": [
+        {
+          "id": "org_budget_only",
+          "name": "Kun organisasjonsbudsjett",
+          "description": "Én felles pott for hele organisasjonen. Ingen grenser per team eller person. Enkel å forvalte, men gir lite kostnadskontroll på teamnivå.",
+          "activeControls": {
+            "orgAdmin": ["Sett org-budsjett", "Se totalforbruk", "Se team-breakdown (med toggle)", "Se individuell breakdown (med toggle)"],
+            "teamAdmin": ["Se teamets forbruk (ingen kvote å styre)"],
+            "developer": ["Se eget forbruk", "Se teamets totalforbruk", "Se org-status"]
+          },
+          "dashboardWidgets": {
+            "orgAdmin": ["Org budget gauge", "Tokenforbruk over tid", "Prognosekort", "Team-oversikt (rangert etter forbruk)", "Individoversikt (med toggle)"],
+            "teamAdmin": ["Team totalforbruk", "Forbrukstrend", "Teammedlemmer og bruk (med toggle)"],
+            "developer": ["Personlig forbruk", "Team totalstatus", "Org-status indikator"]
+          }
+        },
+        {
+          "id": "team_budgets",
+          "name": "Teambudsjetter",
+          "description": "Org-budsjettet fordeles til hvert team. Team Admin kan fordele videre til individer om individuelle kvoter er aktivert. Krever at lag 2 (håndhevelse) er aktivt for å ha effekt.",
+          "activeControls": {
+            "orgAdmin": ["Sett org-budsjett", "Fordel budsjett til hvert team", "Omdisponér mellom team", "Se kvoteutnyttelse per team"],
+            "teamAdmin": ["Se tildelt teambudsjett", "Se forbruk vs. tildelt", "Fordele videre til individer (om individkvoter er aktivert)", "Be om budsjettøkning (flagg til Org Admin)"],
+            "developer": ["Se gjenværende teambudsjett", "Se eget bidrag til teamets forbruk"]
+          },
+          "dashboardWidgets": {
+            "orgAdmin": ["Org budget fordeling (chart)", "Team-kvoter og utnyttelse", "Varsel: team nærmer seg grense"],
+            "teamAdmin": ["Team-kvote gauge", "Forbruk vs. budsjett", "Prognose: når er budsjettet tomt?"],
+            "developer": ["Teamets gjenværende budsjett", "Eget bidrag (%)"]
+          }
+        },
+        {
+          "id": "individual_quotas",
+          "name": "Individuelle kvoter",
+          "description": "Hver bruker tildeles en personlig kvote. Org Admin setter standard og kan overstyre enkeltpersoner. Team Admin kan sette kvoter innenfor sitt teams tildelte budsjett.",
+          "activeControls": {
+            "orgAdmin": ["Sett standard individkvote", "Overstyre kvote per person", "Se individkvoter på tvers av org"],
+            "teamAdmin": ["Sett individkvoter for teammedlemmer (innenfor teambudsjett)", "Overstyre enkeltpersoner i eget team"],
+            "developer": ["Se egen kvote og gjenværende", "Se kvotestatus i profil"]
+          },
+          "dashboardWidgets": {
+            "orgAdmin": ["Individkvoter og utnyttelse (tabell)", "Outliers: hvem bruker mest/minst"],
+            "teamAdmin": ["Teammedlem-kvoter (tabell)", "Fordeling av kvote vs. budsjett"],
+            "developer": ["Personlig kvote gauge", "Gjenværende tokens", "Estimert tid til tomt"]
+          }
+        }
+      ]
+    },
+
+    "layer2_enforcement": {
+      "name": "Håndhevelse — Hva skjer ved grensen?",
+      "description": "Gjelder alle aktive grenser i Lag 1. Soft og Hard kan byttes med ett klikk for å demonstrere forskjellen.",
+      "models": [
+        {
+          "id": "soft_limits",
+          "name": "Myk grense (Soft Limits)",
+          "description": "Brukeren advares ved 75%, 90% og 100%, men tokenforbruk fortsetter uavgrenset. Synliggjør problem uten å blokkere arbeid.",
+          "behavior": [
+            "75%: gul advarsel — 'Du nærmer deg kvoten'",
+            "90%: oransje advarsel — 'Du har brukt 90% av kvoten'",
+            "100%: rød advarsel — 'Kvoten er overskredet — du fortsetter på lånt tid'",
+            "Teamadmin og Org Admin mottar varsler parallelt"
+          ]
+        },
+        {
+          "id": "hard_limits",
+          "name": "Hard grense (Hard Limits)",
+          "description": "Tokenforbruk stoppes umiddelbart ved kvote- eller budsjettgrense. Simulerer reell blokkering.",
+          "behavior": [
+            "75%: gul advarsel sendes",
+            "90%: oransje advarsel sendes",
+            "100%: Copilot-tilgang blokkeres — live event 'Quota Exceeded' vises",
+            "Team Admin og Org Admin mottar blokkerings-alert",
+            "Org Admin kan manuelt oppheve blokkeringen eller heve kvoten"
+          ]
+        }
+      ]
+    },
+
+    "layer3_chargeback": {
+      "name": "Kostnadsattribusjon (Chargeback)",
+      "description": "Kostnader rapporteres tilbake til teams og/eller enkeltpersoner for intern regnskapsføring. Har ingen effekt på tilgang — kun synlighet.",
+      "models": [
+        {
+          "id": "chargeback_team",
+          "name": "Team-chargeback",
+          "description": "Kostnader aggregeres per team og rapporteres til budsjettansvarlig.",
+          "activeControls": {
+            "orgAdmin": ["Se kostnadfordeling per team (kroner/NOK)", "Eksporter rapport"],
+            "teamAdmin": ["Se teamets kostnadsrapport"]
+          }
+        },
+        {
+          "id": "chargeback_individual",
+          "name": "Individuell chargeback",
+          "description": "Kostnader attribueres per person. Kun synlig om Org Admin aktiverer det.",
+          "activeControls": {
+            "orgAdmin": ["Se kostnad per person (med toggle)", "Inkluder i personvernsinnstillinger"],
+            "teamAdmin": ["Se kostnad per teammedlem (avhengig av Org Admins toggle)"],
+            "developer": ["Se eget kostnadsestimat (om aktivert)"]
+          }
+        }
+      ]
+    },
+
+    "layer4_transparency": {
+      "name": "Personvern og synlighet",
+      "description": "Styrer hvem som kan se hva om hvem. Dette er ikke en governance-modell for kostnadskontroll, men for organisatorisk tillit og opplevd rettferdighet. Alle toggles er globale og settes av Org Admin, med Team Admin-arv.",
+      "toggles": [
+        {
+          "id": "show_individual_to_org_admin",
+          "label": "Vis individuelle brukernavn til Org Admin",
+          "default": true,
+          "effect": "Org Admin ser navngitte brukere i dashboards og rapporter"
+        },
+        {
+          "id": "show_individual_to_team_admin",
+          "label": "Vis individuelle brukernavn til Team Admin",
+          "default": true,
+          "effect": "Team Admin ser navngitte teammedlemmer i sitt dashboard"
+        },
+        {
+          "id": "show_individual_to_developer",
+          "label": "Vis individuelle teammedlemmers forbruk til Developer",
+          "default": false,
+          "effect": "Developer kan se hvem i teamet som bruker mest/minst"
+        },
+        {
+          "id": "anonymous_mode_team_admin",
+          "label": "Anonymiser brukere for Team Admin",
+          "default": false,
+          "effect": "Team Admin ser kun 'Bruker A', 'Bruker B' etc."
+        },
+        {
+          "id": "show_chargeback_to_developer",
+          "label": "Vis kostnadsattribusjon til Developer",
+          "default": false,
+          "effect": "Developer ser NOK-kostnader for eget forbruk"
+        },
+        {
+          "id": "show_forecast",
+          "label": "Vis prognoser",
+          "default": true,
+          "effect": "Alle roller med dashboard ser prognosemodul"
+        }
+      ]
+    }
+  },
+
+  "dashboards": {
+    "orgAdmin": {
+      "sections": [
+        {
+          "name": "Oversikt",
+          "widgets": [
+            "Org-budsjett: gauge (brukt/gjenværende/overskredet)",
+            "Totalt tokenforbruk denne perioden",
+            "Prognosert månedskostnad",
+            "Kostnadstrend (linjediagram, siste 30 dager)",
+            "Aktive governance-policyer (chip-liste)",
+            "Varsler og hendelser (live feed)"
+          ]
+        },
+        {
+          "name": "Teamoversikt",
+          "widgets": [
+            "Alle team: kvote og utnyttelse (med toggle)",
+            "Team rangert etter forbruk",
+            "Team som nærmer seg grense (highlighted)"
+          ]
+        },
+        {
+          "name": "Brukeroversikt",
+          "widgets": [
+            "Individuelle brukere: kvote og forbruk (med personverntoggle)",
+            "Top 5 forbrukere",
+            "Brukere som har oversteget grense"
+          ]
+        }
+      ]
+    },
+    "teamAdmin": {
+      "sections": [
+        {
+          "name": "Teamstatus",
+          "widgets": [
+            "Team-kvote gauge (avhengig av aktiv modell)",
+            "Gjenværende teambudsjett",
+            "Prognose: når er budsjettet tomt?",
+            "Forbrukstrend for teamet",
+            "Live bruksfeed (hendelser fra teammedlemmer)"
+          ]
+        },
+        {
+          "name": "Teammedlemmer",
+          "widgets": [
+            "Liste: bruker, kvote, forbruk, status (med personverntoggle — navn vs. anonym)",
+            "Individuelle gauge-bars per bruker",
+            "Varsler om hvem som nærmer seg grense"
+          ]
+        }
+      ]
+    },
+    "developer": {
+      "sections": [
+        {
+          "name": "Min status",
+          "widgets": [
+            "Personlig kvote gauge (om individkvoter aktive)",
+            "Gjenværende tokens",
+            "Estimert tid til kvoten er tom",
+            "Aktivitetslogg (siste prompts, agent-sesjoner)"
+          ]
+        },
+        {
+          "name": "Team og org",
+          "widgets": [
+            "Teamets kvotestatus (aggregert)",
+            "Eget bidrag til teamets forbruk (%)",
+            "Teammedlemmers forbruk (kun om Team Admin har aktivert dette)",
+            "Org-budsjett indikator (trafikklys: grønn/gul/rød)"
+          ]
+        }
+      ]
+    }
+  },
+
+  "adminPanel": {
+    "orgAdmin": {
+      "sections": [
+        {
+          "name": "Organisasjonsinnstillinger",
+          "controls": ["Organisasjonsnavn", "Totalt budsjett (tokens og NOK)", "Faktureringsperiode", "Valutavisning"]
+        },
+        {
+          "name": "Governance-policyer",
+          "controls": [
+            "Budsjettstruktur: [Org-only | Team-budsjetter | Individuelle kvoter] (flervalg)",
+            "Håndhevelse: [Soft limits | Hard limits]",
+            "Chargeback: [Deaktivert | Team | Individuell]"
+          ]
+        },
+        {
+          "name": "Personvern og synlighet",
+          "controls": [
+            "Vis individuelle brukernavn til Org Admin: [Ja/Nei]",
+            "Vis individuelle brukernavn til Team Admin: [Ja/Nei / Anonym]",
+            "Vis individuell bruk til Developer: [Ja/Nei]",
+            "Vis kostnadsattribusjon til Developer: [Ja/Nei]",
+            "Vis prognoser: [Ja/Nei]"
+          ]
+        },
+        {
+          "name": "Teamadministrasjon",
+          "controls": [
+            "Opprett nytt team (navn, budsjett, Team Admin)",
+            "Rediger team (navn, budsjett, Team Admin)",
+            "Slett team",
+            "Flytt brukere mellom team"
+          ]
+        },
+        {
+          "name": "Brukeradministrasjon",
+          "controls": [
+            "Opprett bruker (navn, team, rolle)",
+            "Tildel/endre rolle (Developer → Team Admin)",
+            "Sett standard individkvote",
+            "Overstyr individkvote per bruker",
+            "Aktiver/deaktiver bruker"
+          ]
+        },
+        {
+          "name": "Simuleringskontroller",
+          "controls": ["Start", "Pause", "Hastighet (x1 / x5 / x20)", "Tilbakestill simulering"]
+        }
+      ]
+    },
+    "teamAdmin": {
+      "sections": [
+        {
+          "name": "Teaminnstillinger",
+          "controls": ["Teamnavn (skrivebeskyttet)", "Tildelt teambudsjett (skrivebeskyttet, settes av Org Admin)", "Kontakt Org Admin for budsjettendring"]
+        },
+        {
+          "name": "Synlighetsinnstillinger",
+          "controls": [
+            "Vis individuelle brukernavn: [Ja/Nei / Anonym] (innenfor Org Admin-rammen)",
+            "Vis kostnadsattribusjon per bruker: [Ja/Nei] (om chargeback er aktivert)"
+          ]
+        },
+        {
+          "name": "Brukeradministrasjon (eget team)",
+          "controls": [
+            "Legg til bruker i teamet",
+            "Fjern bruker fra teamet",
+            "Sett individkvote per bruker (om individkvoter er aktivert, innenfor teambudsjettet)",
+            "Overstyr individkvote for teammedlem"
+          ]
+        }
+      ]
+    }
+  },
+
+  "simulation": {
+    "description": "Simuleringen kjøres kontinuerlig og genererer realistiske tokenforbrukshendelser basert på brukerprofiler. Brukes til å demonstrere konsekvenser av ulike policykombinasjonar i sanntid.",
+    "controls": {
+      "play": "Start simuleringen",
+      "pause": "Sett simuleringen på pause",
+      "speed": ["x1 — sanntid", "x5 — 5× akselerert", "x20 — 20× akselerert"],
+      "reset": "Tilbakestill alle data til starttilstand"
+    },
+    "userProfiles": [
+      {
+        "id": "normal_developer",
+        "name": "Normal Developer",
+        "description": "Moderat prompt-volum, gjennomsnittlig token-forbruk per prompt. Jobber med kodegjennomgang og autocomplete.",
+        "dailyTokenRange": "50 000 – 150 000"
+      },
+      {
+        "id": "power_user",
+        "name": "Power User",
+        "description": "Tung bruk av Agent Mode, store kontekstvinduer. Bruker Copilot aktivt i arkitektur- og refaktoreringsoppgaver.",
+        "dailyTokenRange": "500 000 – 1 500 000"
+      },
+      {
+        "id": "intern",
+        "name": "Intern",
+        "description": "Svært lav bruk. Enkle autocomplete-forespørsler, sporadisk.",
+        "dailyTokenRange": "5 000 – 30 000"
+      },
+      {
+        "id": "experimental_user",
+        "name": "Experimental User",
+        "description": "Hyppige forsøk, store prompts, uforutsigbart forbruk. Tester nye Copilot-funksjoner aktivt.",
+        "dailyTokenRange": "200 000 – 2 000 000"
+      }
+    ],
+    "liveEvents": [
+      { "id": "prompt_submitted", "label": "Prompt innsendt", "severity": "info" },
+      { "id": "large_context", "label": "Stor kontekstforespørsel", "severity": "info" },
+      { "id": "agent_mode_session", "label": "Agent Mode-sesjon startet", "severity": "info" },
+      { "id": "quota_warning_75", "label": "Kvoteadvarsel: 75%", "severity": "warning" },
+      { "id": "quota_warning_90", "label": "Kvoteadvarsel: 90%", "severity": "warning" },
+      { "id": "quota_exceeded", "label": "Kvote overskredet!", "severity": "error" },
+      { "id": "budget_exhausted", "label": "Teambudsjett oppbrukt!", "severity": "critical" },
+      { "id": "org_budget_critical", "label": "Org-budsjett kritisk lavt", "severity": "critical" }
+    ]
+  },
+
+  "demoScenario": {
+    "description": "Guidet gjennomgang til bruk i workshops og presentasjoner. Hvert steg bytter policy og viser konsekvensene live.",
+    "steps": [
+      { "step": 1, "action": "Start med kun Org-budsjett og Soft Limits", "observe": "Enkelt dashboard, ingen team- eller individgrenser, kun total-gauge" },
+      { "step": 2, "action": "Aktiver Team-budsjetter", "observe": "Team-kvote-widgets aktiveres, Org Admin kan nå fordele budsjett" },
+      { "step": 3, "action": "Bytt til Team Admin-rolle", "observe": "Kun eget team synlig, team-kvote-gauge vises" },
+      { "step": 4, "action": "Aktiver Individuelle kvoter", "observe": "Per-bruker-kvoter aktiveres, Team Admin kan sette individkvoter" },
+      { "step": 5, "action": "Skjul individuelle brukernavn (anonym-modus)", "observe": "Dashboard byttes til 'Bruker A/B/C' — diskuter personvernaspektet" },
+      { "step": 6, "action": "Bytt til Developer-rolle", "observe": "Ser kun eget forbruk og aggregerte teamtall" },
+      { "step": 7, "action": "Bytt til Hard Limits", "observe": "Advarselsmeldingene skjerpes, simuleringen kan nå blokkere brukere" },
+      { "step": 8, "action": "Kjør simulering til en bruker overskrider kvoten", "observe": "Live event: 'Quota Exceeded', Copilot blokkert, varsel til Team Admin" },
+      { "step": 9, "action": "Bytt tilbake til Soft Limits", "observe": "Blokkering fjernes, sammenlign brukeropplevelse" },
+      { "step": 10, "action": "Aktiver Chargeback", "observe": "Kostnadstall (NOK) aktiveres i dashboards" },
+      { "step": 11, "action": "Sammenlign Org-only vs. Team-budsjetter vs. Individuelle kvoter", "observe": "Diskuter rettferdighet, kontroll og administrasjonskompleksitet" }
+    ]
+  },
+
+  "ethicalConsiderations": {
+    "description": "Appen skal eksplisitt synliggjøre spenningen mellom kostnadskontroll og personvern. Dette er et bevisst pedagogisk grep.",
+    "examples": [
+      "Anonymiseringstoggle: viser hvordan same data kan presenteres med og uten navn",
+      "Developer-synlighet: aktiver/deaktiver kollegers brukstall for å diskutere overvåking vs. åpenhet",
+      "Hard limits demo: vis hva det betyr for en utvikler å bli blokkert midt i et arbeid",
+      "Chargeback: synliggjør kostnadsbevisstheten det skaper hos den enkelte"
+    ]
+  },
+
+  "terminology": {
+    "kreditter": "Det en bruker eller et team tildeles og kan bruke",
+    "tokens": "Det som faktisk konsumeres av GitHub Copilot internt",
+    "kvote": "En definert grense for token-forbruk",
+    "budsjett": "Den totale rammen (i tokens eller NOK) for org eller team",
+    "allokering": "Prosessen med å fordele budsjett til team eller individer",
+    "pooling": "Felles reserve som flere trekker fra",
+    "soft limit": "Advarsel ved grense, men forbruk fortsetter",
+    "hard limit": "Blokkering ved grense",
+    "chargeback": "Internfakturering — kostnader attribueres til cost center",
+    "ULB": "Unit-Level Billing — GitHubs interne term for grense-nivå"
+  }
+}

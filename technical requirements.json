@@ -1,0 +1,257 @@
+{
+  "technicalRequirements": {
+    "stack": {
+      "framework": "React 18 med TypeScript",
+      "styling": "Tailwind CSS v3",
+      "charts": "Recharts",
+      "stateManagement": "Zustand",
+      "icons": "Lucide React",
+      "routing": "React Router v6",
+      "backend": "Supabase (PostgreSQL) for persistent lagring av org, teams og brukere. Simuleringsdata genereres klient-side og skrives ikke til Supabase.",
+      "build": "Vite"
+    },
+
+    "projectStructure": {
+      "description": "Feature-basert mappestruktur. Delt logikk i /shared, rollebaserte views i /views, simuleringskjerne i /simulation.",
+      "layout": {
+        "src/": {
+          "main.tsx": "App entry point",
+          "App.tsx": "Routing og global layout-wrapper",
+          "store/": {
+            "useGovernanceStore.ts": "Zustand: aktive policyer (budsjettstruktur, håndhevelse, chargeback, synlighetsinnstillinger)",
+            "useSimulationStore.ts": "Zustand: simuleringsstatus, hastighet, live events, forbruksdata",
+            "useOrgStore.ts": "Zustand: organisasjonsdata, teams, brukere, kvoter, budsjett"
+          },
+          "simulation/": {
+            "engine.ts": "Simuleringskjerne — timer-basert loop som genererer tokenforbruk per bruker",
+            "profiles.ts": "Brukerprofiler og forbruksmønstre (Normal, Power, Intern, Experimental)",
+            "events.ts": "Hendelsestyper og event-emitters (QuotaWarning, QuotaExceeded osv.)"
+          },
+          "views/": {
+            "OrgAdminView/": "Org Admin-dashboards og admin-panel",
+            "TeamAdminView/": "Team Admin-dashboards",
+            "DeveloperView/": "Developer-view"
+          },
+          "components/": {
+            "layout/": "Shell, TopBar, SideNav, RoleSwitcher",
+            "dashboard/": "Gjenbrukbare widgets (QuotaGauge, UsageTrend, LiveFeed, AlertBanner osv.)",
+            "admin/": "Admin-panel seksjonene (GovernancePolicyPanel, TeamManagement, UserManagement osv.)",
+            "simulation/": "SimulationControls, LiveEventFeed, SpeedSelector",
+            "charts/": "Gjenbrukbare Recharts-komponenter"
+          },
+          "lib/": {
+            "supabase.ts": "Supabase-klient initialisert med URL og anon key fra .env"
+          },
+          "services/": {
+            "orgService.ts": "CRUD for organizations-tabellen",
+            "teamService.ts": "CRUD for teams-tabellen",
+            "userService.ts": "CRUD for users-tabellen",
+            "policyService.ts": "Les og skriv governance_policies per organisasjon"
+          },
+          "data/": {
+            "fallbackMock.ts": "Fallback mock-data brukt kun om Supabase ikke er koblet til",
+            "mockEvents.ts": "Forhåndsdefinerte hendelsesscenarioer for demo (klient-side)"
+          },
+          "types/": {
+            "governance.ts": "TypeScript-typer for policyer, modeller, toggles",
+            "org.ts": "Typer for Org, Team, User, Quota, BudgetAllocation",
+            "simulation.ts": "Typer for SimulationEvent, UserProfile, SpeedSetting"
+          },
+          "hooks/": {
+            "useActiveRole.ts": "Henter aktivt valgt rolle fra store",
+            "usePolicyCheck.ts": "Utility: sjekker om en gitt policy er aktiv",
+            "useSimulation.ts": "Kobler simuleringskjerne til React-komponentene"
+          }
+        }
+      }
+    },
+
+    "stateArchitecture": {
+      "governanceStore": {
+        "description": "Kjernelogikk. All policy-logikk er reaktiv — komponenter abonnerer på aktive policyer og viser/skjuler innhold automatisk.",
+        "state": {
+          "budgetStructure": {
+            "type": "{ orgBudgetOnly: boolean, teamBudgets: boolean, individualQuotas: boolean }",
+            "default": "{ orgBudgetOnly: true, teamBudgets: false, individualQuotas: false }"
+          },
+          "enforcement": {
+            "type": "'soft' | 'hard'",
+            "default": "'soft'"
+          },
+          "chargeback": {
+            "type": "'disabled' | 'team' | 'individual'",
+            "default": "'disabled'"
+          },
+          "transparency": {
+            "type": "{ showIndividualToOrgAdmin: boolean, showIndividualToTeamAdmin: boolean, anonymizationForTeamAdmin: boolean, showIndividualToDeveloper: boolean, showChargebackToDeveloper: boolean, showForecast: boolean }",
+            "default": "{ showIndividualToOrgAdmin: true, showIndividualToTeamAdmin: true, anonymizationForTeamAdmin: false, showIndividualToDeveloper: false, showChargebackToDeveloper: false, showForecast: true }"
+          },
+          "activeRole": {
+            "type": "'org_admin' | 'team_admin' | 'developer'",
+            "default": "'org_admin'"
+          },
+          "activeTeamId": {
+            "type": "string | null",
+            "description": "For Team Admin: hvilket team er aktivt valgt",
+            "default": "null"
+          }
+        }
+      },
+
+      "orgStore": {
+        "description": "Organisasjonsdata og kvote-strukturen. Lastes fra Supabase ved oppstart og holdes i minnet under sesjonen. Simuleringens løpende spentTokens akkumuleres kun i minnet — ikke skrevet tilbake til Supabase.",
+        "state": {
+          "organization": "{ id, name, totalBudgetTokens, spentTokens, currency }",
+          "teams": "Team[] — { id, name, allocatedTokens, spentTokens, managerId, memberIds }",
+          "users": "User[] — { id, name, teamId, role, profile, quota, spentTokens, isBlocked, isEnabled }",
+          "isLoading": "boolean — true mens data lastes fra Supabase",
+          "loadError": "string | null"
+        },
+        "dataFlow": "Ved mount: fetch organizations → teams → users fra Supabase → populer store. Admin-endringer (opprett team, endre kvote osv.) skrives tilbake til Supabase umiddelbart. Simuleringens token-akkumulering skjer kun i minnet og nullstilles ved Reset."
+      },
+
+      "simulationStore": {
+        "description": "Simuleringsstatus og live event-feed.",
+        "state": {
+          "isRunning": "boolean",
+          "speed": "1 | 5 | 20",
+          "tick": "number — øker for hvert simuleringssteg",
+          "events": "SimulationEvent[] — ring-buffer med siste 100 hendelser",
+          "historicalUsage": "{ userId: string, tokens: number, timestamp: number }[]"
+        }
+      }
+    },
+
+    "simulationEngine": {
+      "description": "Timer-basert loop (setInterval) som kjører i bakgrunnen. Hastigheten styrer intervallet: x1=1000ms, x5=200ms, x20=50ms. Per tick genereres tokenforbruk for hver aktiv bruker basert på profil.",
+      "logic": [
+        "Hent alle aktive brukere fra orgStore",
+        "Generer tilfeldig tokenforbruk per bruker basert på profil (normalfordeling innenfor profilens range)",
+        "Oppdater spentTokens for bruker, team og org",
+        "Sjekk terskler (75%, 90%, 100%) for aktive kvoter/budsjetter",
+        "Emit relevante hendelser (QuotaWarning, QuotaExceeded, BudgetExhausted)",
+        "Om Hard Limits aktiv: sett isBlocked=true for brukere/teams som overskrider",
+        "Legg til historisk datapunkt for trendgrafer"
+      ]
+    },
+
+    "policyEngine": {
+      "description": "Enkel reaktiv sjekk-mekanisme. Komponenter bruker usePolicyCheck-hooket for å avgjøre hva som rendres.",
+      "example": "const { teamBudgets, individualQuotas } = useGovernanceStore() — komponenten rendrer eller skjuler widgets basert på dette",
+      "principle": "Policy-endringer er umiddelbart reaktive — ingen re-navigering, ingen reload"
+    },
+
+    "roleSwitcher": {
+      "description": "Dropdown i toppmenyen som endrer activeRole og activeTeamId i governanceStore. Bytte er øyeblikkelig og forandrer hele dashboardvisningen.",
+      "options": [
+        "Org Admin",
+        "Team Admin: [Team A]",
+        "Team Admin: [Team B]",
+        "Developer: [Bruker X]",
+        "Developer: [Bruker Y]"
+      ],
+      "note": "Ingen autentisering — dette er et demo-verktøy"
+    },
+
+    "supabase": {
+      "description": "Supabase brukes som persistent datakilde for konfigurasjon og demoscenarioer. Simuleringens løpende forbruksdata lever kun i klient-minnet.",
+      "tables": {
+        "organizations": {
+          "columns": [
+            "id uuid PRIMARY KEY DEFAULT gen_random_uuid()",
+            "name text NOT NULL",
+            "total_budget_tokens bigint NOT NULL",
+            "currency text DEFAULT 'NOK'",
+            "tokens_per_nok integer DEFAULT 10000",
+            "created_at timestamptz DEFAULT now()"
+          ]
+        },
+        "teams": {
+          "columns": [
+            "id uuid PRIMARY KEY DEFAULT gen_random_uuid()",
+            "organization_id uuid REFERENCES organizations(id) ON DELETE CASCADE",
+            "name text NOT NULL",
+            "allocated_tokens bigint DEFAULT 0",
+            "manager_user_id uuid REFERENCES users(id) ON DELETE SET NULL",
+            "created_at timestamptz DEFAULT now()"
+          ]
+        },
+        "users": {
+          "columns": [
+            "id uuid PRIMARY KEY DEFAULT gen_random_uuid()",
+            "organization_id uuid REFERENCES organizations(id) ON DELETE CASCADE",
+            "team_id uuid REFERENCES teams(id) ON DELETE SET NULL",
+            "name text NOT NULL",
+            "role text CHECK (role IN ('org_admin', 'team_admin', 'developer')) DEFAULT 'developer'",
+            "simulation_profile text CHECK (simulation_profile IN ('normal_developer', 'power_user', 'intern', 'experimental_user')) DEFAULT 'normal_developer'",
+            "quota_tokens bigint DEFAULT 0",
+            "is_enabled boolean DEFAULT true",
+            "created_at timestamptz DEFAULT now()"
+          ],
+          "note": "quota_tokens = 0 betyr at individuelle kvoter ikke er satt for denne brukeren (arver teambudsjett eller org-budsjett)"
+        },
+        "governance_policies": {
+          "columns": [
+            "id uuid PRIMARY KEY DEFAULT gen_random_uuid()",
+            "organization_id uuid REFERENCES organizations(id) ON DELETE CASCADE UNIQUE",
+            "budget_structure jsonb DEFAULT '{\"orgBudgetOnly\": true, \"teamBudgets\": false, \"individualQuotas\": false}'",
+            "enforcement text CHECK (enforcement IN ('soft', 'hard')) DEFAULT 'soft'",
+            "chargeback text CHECK (chargeback IN ('disabled', 'team', 'individual')) DEFAULT 'disabled'",
+            "transparency jsonb DEFAULT '{\"showIndividualToOrgAdmin\": true, \"showIndividualToTeamAdmin\": true, \"anonymizationForTeamAdmin\": false, \"showIndividualToDeveloper\": false, \"showChargebackToDeveloper\": false, \"showForecast\": true}'",
+            "updated_at timestamptz DEFAULT now()"
+          ]
+        }
+      },
+      "rowLevelSecurity": "RLS deaktivert for dette demo-verktøyet — ingen innlogging, all data er åpen for demo-formål. Vurder å aktivere RLS om verktøyet driftes eksternt.",
+      "seedData": {
+        "description": "SQL seed-script som populerer Supabase med demo-data til workshops.",
+        "organization": { "name": "Avinor Digital", "total_budget_tokens": 10000000, "currency": "NOK", "tokens_per_nok": 10000 },
+        "teams": [
+          { "name": "Platform Team", "allocated_tokens": 3000000 },
+          { "name": "Passenger Experience", "allocated_tokens": 4000000 },
+          { "name": "Ops & Infrastructure", "allocated_tokens": 2000000 },
+          { "name": "Data & Analytics", "allocated_tokens": 1000000 }
+        ],
+        "userProfileDistribution": {
+          "normal_developer": "60%",
+          "power_user": "15%",
+          "intern": "15%",
+          "experimental_user": "10%"
+        }
+      },
+      "envVariables": {
+        "VITE_SUPABASE_URL": "Supabase project URL",
+        "VITE_SUPABASE_ANON_KEY": "Supabase public anon key"
+      }
+    },
+
+    "uiComponents": {
+      "QuotaGauge": "Radial eller lineær gauge-komponent. Props: used, total, label, severity. Farge: grønn < 75%, gul 75-90%, oransje 90-100%, rød > 100%",
+      "UsageTrendChart": "Linjediagram (Recharts LineChart). Viser historisk forbruk over tid. Støtter flerlinje for teamsammenligning.",
+      "LiveEventFeed": "Scrollbar liste med tidsstemplede hendelser. Fargekoding etter severity. Nyeste øverst.",
+      "AlertBanner": "Sticky banner øverst i dashboard ved kritiske hendelser. Lukkes manuelt.",
+      "TeamTable": "Tabell med team-rader: navn, kvote, forbruk, utnyttelse (%), status-indikator",
+      "UserTable": "Tabell med bruker-rader: navn (eller 'Bruker X' om anonym), profil, kvote, forbruk, status, blokkert-indikator",
+      "PolicyTogglePanel": "Gruppe av toggle-switches for governance-innstillinger. Layoutet som innstillingsside.",
+      "SimulationControls": "Play/Pause-knapp, Speed-selector (x1/x5/x20), Reset-knapp. Alltid synlig i toppbar.",
+      "RoleSwitcher": "Dropdown i toppbar. Viser aktivt valgt rolle med ikon."
+    },
+
+    "charts": [
+      "Org budsjett: QuotaGauge (radial, stor)",
+      "Tokenforbruk over tid: UsageTrendChart (linjediagram)",
+      "Team-sammenligning: BarChart (Recharts)",
+      "Individuell sammenligning: HorizontalBarChart",
+      "Prognose: ComposedChart med stiplet fremskrivingslinje",
+      "Kvoteutnyttelse per bruker: StackedBarChart"
+    ],
+
+    "responsiveness": "Desktop-first (1280px+), fungerer på 1024px. Ikke optimalisert for mobil — workshopverktøy brukes på laptop/skjerm.",
+
+    "performance": {
+      "simulationLoop": "requestAnimationFrame eller setInterval — ikke blokkerende",
+      "storeUpdates": "Zustand med immer for immutable state-oppdateringer",
+      "rendering": "React.memo på tunge chart-komponenter for å unngå unødvendig re-render under simulering"
+    }
+  }
+}
