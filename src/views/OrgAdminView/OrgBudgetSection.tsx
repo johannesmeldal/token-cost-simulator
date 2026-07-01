@@ -45,8 +45,8 @@ export default function OrgBudgetSection() {
   if (blockedUsers > 0) alerts.push(`${blockedUsers} bruker(e) blokkert av hard limit`)
   if (usersInOverflow > 0) alerts.push(`${usersInOverflow} bruker(e) har overskredet inkludert kvote og trekker fra overflow-potten`)
   teams.forEach(t => {
-    const spent = teamUsage[t.id] ?? 0
-    if (policy.budgetStructure.teamBudgets && t.allocatedTokens > 0 && spent / t.allocatedTokens >= 0.9)
+    const spent = teamUsage[t.id]?.spentCredits ?? 0
+    if (policy.budgetStructure.teamBudgets && t.allocatedCredits > 0 && spent / t.allocatedCredits >= 0.9)
       alerts.push(`${t.name}: over 90% av teambudsjett`)
   })
 
@@ -86,16 +86,16 @@ export default function OrgBudgetSection() {
       {/* Stat-kort */}
       <div className="grid grid-cols-4 gap-4">
         <StatCard
-          label="Inkluderte kreditter brukt"
-          value={formatCredits(Math.min(totalCreditsUsed, totalIncludedCredits))}
-          sublabel={`av ${formatCredits(totalIncludedCredits)} inkludert totalt`}
+          label="Inkludert kvote brukt"
+          value={formatNok(creditsToNok(Math.min(totalCreditsUsed, totalIncludedCredits)))}
+          sublabel={`av ${formatNok(creditsToNok(totalIncludedCredits))} inkludert totalt`}
           icon={<Coins size={15} />}
           accent={includedPct >= 0.9 ? 'text-accent-orange' : includedPct >= 0.75 ? 'text-accent-yellow' : 'text-accent-green'}
           tooltip={
             <div className="flex flex-col gap-1">
-              <span className="font-medium text-gray-200">Inkluderte kreditter</span>
-              <span>Brukt: {Math.min(totalCreditsUsed, totalIncludedCredits).toFixed(1)} kr</span>
-              <span>Totalt inkludert: {totalIncludedCredits.toLocaleString('no')} kr ({payingUsers.length} brukere × {INCLUDED_CREDITS_PER_USER} kr)</span>
+              <span className="font-medium text-gray-200">Inkludert kvote</span>
+              <span>Brukt: {formatCredits(Math.min(totalCreditsUsed, totalIncludedCredits))}</span>
+              <span>Totalt inkludert: {formatCredits(totalIncludedCredits)} ({payingUsers.length} brukere × {INCLUDED_CREDITS_PER_USER} kreditter)</span>
               <span className="pt-1 border-t border-surface-border text-gray-500">
                 1 kreditt = $0.01 = 0.11 NOK. Disse er forhåndsbetalt i abonnementet — ikke direktekostnad.
               </span>
@@ -201,10 +201,10 @@ export default function OrgBudgetSection() {
                   <QuotaGauge
                     key={t.id}
                     label={t.name}
-                    used={teamUsage[t.id] ?? 0}
-                    total={t.allocatedTokens}
+                    used={creditsToNok(teamUsage[t.id]?.spentCredits ?? 0)}
+                    total={creditsToNok(t.allocatedCredits)}
                     size="sm"
-                    unit="tokens"
+                    unit="NOK"
                   />
                 ))}
               </div>
@@ -212,12 +212,8 @@ export default function OrgBudgetSection() {
           </div>
         </SectionCard>
 
-        <SectionCard title="Forbrukstrend" subtitle="Akkumulert kredittforbruk over simuleringsperioden" className="col-span-2">
-          <UsageTrendChart scope="org" quota={totalIncludedCredits + ORG_OVERFLOW_BUDGET_CREDITS} />
-          <div className="mt-2 flex items-center gap-4 text-xs text-gray-500">
-            <span className="flex items-center gap-1"><span className="h-px w-4 bg-accent-blue inline-block" /> Forbruk</span>
-            <span className="flex items-center gap-1"><span className="h-px w-4 bg-accent-red border-dashed border-t border-accent-red inline-block" /> Totalt tak</span>
-          </div>
+        <SectionCard title="Forbrukstrend" subtitle="Forbruk i NOK — periode 1 (premium-prompt) og periode 2 (forbruksbasert), dag/uke/måned/år" className="col-span-2">
+          <UsageTrendChart scope="org" />
         </SectionCard>
       </div>
     </div>

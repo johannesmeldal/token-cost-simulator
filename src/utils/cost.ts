@@ -57,9 +57,9 @@ export function effectiveNokPerMillion(modelId: ModelId): number {
  * Formatering
  */
 export function formatCredits(credits: number): string {
-  if (credits >= 10_000) return `${(credits / 1_000).toFixed(1)}k kr`
-  if (credits >= 1_000) return `${(credits / 1_000).toFixed(2)}k kr`
-  return `${credits.toFixed(1)} kr`
+  if (credits >= 10_000) return `${(credits / 1_000).toFixed(1)}k kreditter`
+  if (credits >= 1_000) return `${(credits / 1_000).toFixed(2)}k kreditter`
+  return `${credits.toFixed(1)} kreditter`
 }
 
 export function formatNok(nok: number): string {

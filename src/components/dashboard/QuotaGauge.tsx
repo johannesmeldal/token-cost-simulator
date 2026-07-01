@@ -9,6 +9,8 @@ interface QuotaGaugeProps {
   tokensPerNok?: number
   /** Enhet som vises i tooltip: 'kreditter' | 'tokens' | 'NOK' */
   unit?: 'kreditter' | 'tokens' | 'NOK'
+  /** Valgfri modell-fordeling vist som ekstra linjer i tooltipen */
+  modelBreakdown?: { model: string; value: number }[]
 }
 
 function getSeverityColor(pct: number) {
@@ -24,8 +26,14 @@ function formatTokens(n: number): string {
   return n.toString()
 }
 
-function buildTooltip(used: number, total: number, unit: string, tokensPerNok?: number) {
-  const u = unit === 'kreditter' ? 'kr' : unit === 'tokens' ? 'tokens' : 'NOK'
+function buildTooltip(
+  used: number,
+  total: number,
+  unit: string,
+  tokensPerNok?: number,
+  modelBreakdown?: { model: string; value: number }[]
+) {
+  const u = unit === 'kreditter' ? 'kreditter' : unit === 'tokens' ? 'tokens' : 'NOK'
   const lines: string[] = [
     `Brukt: ${used.toLocaleString('no')} ${u}`,
     `Totalt: ${total.toLocaleString('no')} ${u}`,
@@ -40,11 +48,18 @@ function buildTooltip(used: number, total: number, unit: string, tokensPerNok?: 
   return (
     <div className="flex flex-col gap-1">
       {lines.map(l => <span key={l}>{l}</span>)}
+      {modelBreakdown && modelBreakdown.length > 0 && (
+        <div className="mt-1 flex flex-col gap-0.5 border-t border-surface-border pt-1 text-gray-400">
+          {modelBreakdown.map(m => (
+            <span key={m.model}>{m.model}: {m.value.toLocaleString('no')} {u}</span>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
 
-export default function QuotaGauge({ label, used, total, sublabel, size = 'md', tokensPerNok, unit = 'tokens' }: QuotaGaugeProps) {
+export default function QuotaGauge({ label, used, total, sublabel, size = 'md', tokensPerNok, unit = 'tokens', modelBreakdown }: QuotaGaugeProps) {
   const pct = total > 0 ? Math.min(used / total, 1) : 0
   const { bar, text } = getSeverityColor(pct)
   const heightClass = size === 'lg' ? 'h-3' : size === 'sm' ? 'h-1.5' : 'h-2'
@@ -53,7 +68,7 @@ export default function QuotaGauge({ label, used, total, sublabel, size = 'md', 
     <div className="flex flex-col gap-1.5">
       <div className="flex items-baseline justify-between">
         <span className={`font-medium ${size === 'lg' ? 'text-sm' : 'text-xs'} text-gray-300`}>{label}</span>
-        <Tooltip content={buildTooltip(used, total, unit, tokensPerNok)}>
+        <Tooltip content={buildTooltip(used, total, unit, tokensPerNok, modelBreakdown)}>
           <span className={`font-mono text-xs ${text} cursor-help underline decoration-dotted underline-offset-2`}>
             {formatTokens(used)} / {formatTokens(total)}
           </span>

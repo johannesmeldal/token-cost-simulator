@@ -6,7 +6,7 @@ interface DbTeam {
   id: string
   organization_id: string
   name: string
-  allocated_tokens: number
+  allocated_credits: number
   manager_user_id: string | null
 }
 
@@ -15,7 +15,7 @@ function fromDb(row: DbTeam): Team {
     id: row.id,
     organizationId: row.organization_id,
     name: row.name,
-    allocatedTokens: row.allocated_tokens,
+    allocatedCredits: row.allocated_credits,
     managerUserId: row.manager_user_id,
   }
 }
@@ -40,14 +40,14 @@ export async function fetchTeams(organizationId: string): Promise<Team[]> {
 export async function createTeam(
   organizationId: string,
   name: string,
-  allocatedTokens: number,
+  allocatedCredits: number,
   managerUserId: string | null
 ): Promise<Team | null> {
   if (!isSupabaseConfigured) return null
 
   const { data, error } = await supabase
     .from('teams')
-    .insert({ organization_id: organizationId, name, allocated_tokens: allocatedTokens, manager_user_id: managerUserId })
+    .insert({ organization_id: organizationId, name, allocated_credits: allocatedCredits, manager_user_id: managerUserId })
     .select()
     .single()
 
@@ -61,13 +61,13 @@ export async function createTeam(
 
 export async function updateTeam(
   id: string,
-  updates: Partial<Pick<Team, 'name' | 'allocatedTokens' | 'managerUserId'>>
+  updates: Partial<Pick<Team, 'name' | 'allocatedCredits' | 'managerUserId'>>
 ): Promise<void> {
   if (!isSupabaseConfigured) return
 
   const dbUpdates: Partial<DbTeam> = {}
   if (updates.name !== undefined) dbUpdates.name = updates.name
-  if (updates.allocatedTokens !== undefined) dbUpdates.allocated_tokens = updates.allocatedTokens
+  if (updates.allocatedCredits !== undefined) dbUpdates.allocated_credits = updates.allocatedCredits
   if (updates.managerUserId !== undefined) dbUpdates.manager_user_id = updates.managerUserId
 
   const { error } = await supabase.from('teams').update(dbUpdates).eq('id', id)

@@ -1,10 +1,20 @@
 import type { SimulationProfile } from '../types/org'
 import type { ModelId } from '../data/pricing'
 
+interface ModelWeight {
+  model: ModelId
+  /** Relativ vekt — trenger ikke summere til 1 */
+  weight: number
+}
+
 interface ProfileConfig {
   label: string
-  /** Primær modell denne profilen bruker */
-  primaryModel: ModelId
+  /**
+   * Vektet fordeling over modeller denne profilen kan trekke per hendelse.
+   * Simulerer at Copilots "auto"-modellvelger sprer bruken over flere modeller
+   * i stedet for at én bruker alltid treffer samme modell.
+   */
+  modelWeights: ModelWeight[]
   /** Token range per simulerings-tick */
   minTokens: number
   maxTokens: number
@@ -20,63 +30,86 @@ interface ProfileConfig {
 
 export const PROFILES: Record<SimulationProfile, ProfileConfig> = {
   /**
-   * Bruker Claude Sonnet (standard-tier) for det meste.
-   * Moderat volum, typiske autocomplete- og kodegjennomgangsoppgaver.
+   * Mest Claude Sonnet (standard-tier), med noe spredning til lettere/inkluderte
+   * modeller via auto-velgeren. Moderat volum, typiske autocomplete-/kodegjennomgangsoppgaver.
    */
   normal_developer: {
     label: 'Normal Developer',
-    primaryModel: 'claude_sonnet_4_6',
+    modelWeights: [
+      { model: 'claude_sonnet_4_6', weight: 70 },
+      { model: 'claude_haiku_4_5', weight: 15 },
+      { model: 'gpt_4_1', weight: 10 },
+      { model: 'gemini_2_5_pro', weight: 5 },
+    ],
     minTokens: 200,
     maxTokens: 1_200,
     largeContextChance: 0.05,
     agentModeChance: 0.02,
     idleChance: 0.30,
-    description: 'Bruker Claude Sonnet. Moderat volum — autocomplete og kodegjennomgang.',
+    description: 'Bruker mest Claude Sonnet, med noe spredning via auto-modellvelgeren. Moderat volum.',
   },
 
   /**
-   * Bruker Claude Opus (frontier-tier) — tyngste og dyreste modell.
-   * Stor Agent Mode-bruk, lange kontekstvinduer, tung refaktorering.
+   * Mest Claude Opus (frontier-tier) — tyngste og dyreste modell — men trekker
+   * også Sonnet/frontier-alternativer via auto-velgeren. Stor Agent Mode-bruk.
    */
   power_user: {
     label: 'Power User',
-    primaryModel: 'claude_opus_4_8',
+    modelWeights: [
+      { model: 'claude_opus_4_8', weight: 55 },
+      { model: 'claude_sonnet_4_6', weight: 25 },
+      { model: 'gemini_2_5_pro', weight: 10 },
+      { model: 'gpt_5_5', weight: 10 },
+    ],
     minTokens: 1_500,
     maxTokens: 8_000,
     largeContextChance: 0.20,
     agentModeChance: 0.15,
     idleChance: 0.05,
-    description: 'Bruker Claude Opus (frontier). Tung Agent Mode-bruk og store kontekstvinduer.',
+    description: 'Bruker mest Claude Opus (frontier). Tung Agent Mode-bruk og store kontekstvinduer.',
   },
 
   /**
-   * Bruker GPT-5 mini — inkludert/gratis, null kredittforbruk.
+   * Mest inkluderte/gratis modeller — null kredittforbruk mesteparten av tiden.
    * Sporadisk bruk, enkle autocomplete-forespørsler.
    */
   intern: {
     label: 'Intern',
-    primaryModel: 'gpt_5_mini',
+    modelWeights: [
+      { model: 'gpt_5_mini', weight: 55 },
+      { model: 'gpt_4_1', weight: 30 },
+      { model: 'claude_haiku_4_5', weight: 10 },
+      { model: 'claude_sonnet_4_6', weight: 5 },
+    ],
     minTokens: 50,
     maxTokens: 300,
     largeContextChance: 0.01,
     agentModeChance: 0.00,
     idleChance: 0.60,
-    description: 'Bruker GPT-5 mini (inkludert — gratis). Svært lav og sporadisk bruk.',
+    description: 'Bruker mest inkluderte/gratis modeller. Svært lav og sporadisk bruk.',
   },
 
   /**
-   * Veksler mellom modeller, store prompts, uforutsigbart forbruk.
-   * Bruker Opus for eksperimentelle Agent Mode-kjøringer.
+   * Veksler mye mellom modeller — store prompts, uforutsigbart forbruk.
+   * Bred spredning over frontier- og standard-modeller via auto-velgeren.
    */
   experimental_user: {
     label: 'Experimental User',
-    primaryModel: 'claude_opus_4_8',
+    modelWeights: [
+      { model: 'claude_opus_4_8', weight: 25 },
+      { model: 'gpt_5_5', weight: 20 },
+      { model: 'claude_sonnet_4_6', weight: 15 },
+      { model: 'gemini_2_5_pro', weight: 15 },
+      { model: 'claude_haiku_4_5', weight: 10 },
+      { model: 'gpt_5_mini', weight: 10 },
+      { model: 'gpt_4_1', weight: 5 },
+    ],
     minTokens: 0,
     maxTokens: 15_000,
     largeContextChance: 0.25,
     agentModeChance: 0.10,
     idleChance: 0.20,
-    description: 'Bruker Claude Opus. Hyppige forsøk, store prompts, uforutsigbart forbruk.',
+    description: 'Veksler mye mellom modeller. Hyppige forsøk, store prompts, uforutsigbart forbruk.',
   },
 }
 
@@ -100,6 +133,18 @@ export function getEventType(
   return 'prompt_submitted'
 }
 
-export function getPrimaryModel(profile: SimulationProfile): ModelId {
-  return PROFILES[profile].primaryModel
+/**
+ * Trekker en modell for én simulert hendelse, vektet etter profilens
+ * modelWeights. Simulerer Copilots "auto"-modellvelger: samme bruker kan
+ * treffe ulike modeller fra hendelse til hendelse.
+ */
+export function pickModel(profile: SimulationProfile): ModelId {
+  const weights = PROFILES[profile].modelWeights
+  const total = weights.reduce((sum, w) => sum + w.weight, 0)
+  let roll = Math.random() * total
+  for (const w of weights) {
+    roll -= w.weight
+    if (roll <= 0) return w.model
+  }
+  return weights[weights.length - 1].model
 }

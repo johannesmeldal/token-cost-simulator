@@ -2,11 +2,23 @@ import { useEffect, useRef } from 'react'
 import { useSimulationStore } from '../store/useSimulationStore'
 import { useOrgStore } from '../store/useOrgStore'
 import { useGovernanceStore } from '../store/useGovernanceStore'
-import { generateTokens, getEventType } from '../simulation/profiles'
+import { generateTokens, getEventType, pickModel } from '../simulation/profiles'
+import { tokensToCredits, creditsToNok } from '../utils/cost'
+import { tickToTimestamp } from '../simulation/clock'
 import type { SimulationEvent } from '../types/simulation'
 
 const INTERVAL_MS: Record<1 | 5 | 20, number> = { 1: 1000, 5: 200, 20: 50 }
 const HISTORY_INTERVAL = 10 // record history every N ticks
+
+interface NokAccumulator {
+  org: number
+  team: Record<string, number>
+  user: Record<string, number>
+}
+
+function emptyAccumulator(): NokAccumulator {
+  return { org: 0, team: {}, user: {} }
+}
 
 export function useSimulation() {
   const { isRunning, speed, pushEvent, pushHistory, incrementTick, tick } = useSimulationStore()
@@ -15,6 +27,14 @@ export function useSimulation() {
 
   const tickRef = useRef(tick)
   tickRef.current = tick
+
+  const accRef = useRef<NokAccumulator>(emptyAccumulator())
+
+  // Nullstill NOK-akkumulatoren når tick nullstilles (Reset-knappen) — ellers
+  // henger forbruk fra før reset igjen og lekker inn i neste historikk-punkt.
+  useEffect(() => {
+    if (tick === 0) accRef.current = emptyAccumulator()
+  }, [tick])
 
   useEffect(() => {
     if (!isRunning || !organization) return
@@ -26,11 +46,15 @@ export function useSimulation() {
         const tokens = generateTokens(user.simulationProfile)
         if (tokens === 0) continue
 
-        addUsage(user.id, tokens)
+        const modelId = pickModel(user.simulationProfile)
+        const creditsThisEvent = tokensToCredits(tokens, modelId)
 
-        const currentUserSpent = (userUsage[user.id]?.spentTokens ?? 0) + tokens
-        const currentTeamSpent = user.teamId ? (teamUsage[user.teamId] ?? 0) + tokens : 0
-        const orgSpent = Object.values(teamUsage).reduce((a, b) => a + b, 0) + tokens
+        addUsage(user.id, tokens, modelId)
+
+        const currentUserCredits = (userUsage[user.id]?.spentCredits ?? 0) + creditsThisEvent
+        const currentTeamCredits = user.teamId ? (teamUsage[user.teamId]?.spentCredits ?? 0) + creditsThisEvent : 0
+        const orgCredits =
+          Object.values(teamUsage).reduce((a, t) => a + t.spentCredits, 0) + creditsThisEvent
 
         const team = teams.find(t => t.id === user.teamId)
 
@@ -41,25 +65,25 @@ export function useSimulation() {
         const { individualQuotas, teamBudgets } = policy.budgetStructure
         const isHard = policy.enforcement === 'hard'
 
-        // Individual quota checks
-        if (individualQuotas && user.quotaTokens > 0) {
-          const pct = currentUserSpent / user.quotaTokens
+        // Individual quota checks (kreditter)
+        if (individualQuotas && user.quotaCredits > 0) {
+          const pct = currentUserCredits / user.quotaCredits
           if (pct >= 1) {
             if (isHard) blockUser(user.id)
             eventType = 'quota_exceeded'
             severity = 'error'
-          } else if (pct >= 0.9 && currentUserSpent - tokens < user.quotaTokens * 0.9) {
+          } else if (pct >= 0.9 && currentUserCredits - creditsThisEvent < user.quotaCredits * 0.9) {
             eventType = 'quota_warning_90'
             severity = 'warning'
-          } else if (pct >= 0.75 && currentUserSpent - tokens < user.quotaTokens * 0.75) {
+          } else if (pct >= 0.75 && currentUserCredits - creditsThisEvent < user.quotaCredits * 0.75) {
             eventType = 'quota_warning_75'
             severity = 'warning'
           }
         }
 
-        // Team budget checks
-        if (teamBudgets && team && team.allocatedTokens > 0) {
-          const pct = currentTeamSpent / team.allocatedTokens
+        // Team budget checks (kreditter)
+        if (teamBudgets && team && team.allocatedCredits > 0) {
+          const pct = currentTeamCredits / team.allocatedCredits
           if (pct >= 1 && eventType !== 'quota_exceeded') {
             eventType = 'budget_exhausted'
             severity = 'critical'
@@ -69,8 +93,8 @@ export function useSimulation() {
           }
         }
 
-        // Org budget check
-        const orgPct = orgSpent / organization.totalBudgetTokens
+        // Org budget check (kreditter)
+        const orgPct = orgCredits / organization.totalBudgetCredits
         if (orgPct >= 0.9 && severity === 'info') {
           eventType = 'org_budget_critical'
           severity = 'critical'
@@ -97,10 +121,19 @@ export function useSimulation() {
           type: eventType,
           severity,
           tokensConsumed: tokens,
+          modelId,
           message: eventMessages[eventType],
         }
 
         pushEvent(event)
+
+        // Akkumuler NOK-delta for graf-historikk
+        const nokThisEvent = creditsToNok(creditsThisEvent)
+        accRef.current.org += nokThisEvent
+        if (user.teamId) {
+          accRef.current.team[user.teamId] = (accRef.current.team[user.teamId] ?? 0) + nokThisEvent
+        }
+        accRef.current.user[user.id] = (accRef.current.user[user.id] ?? 0) + nokThisEvent
       }
 
       incrementTick()
@@ -109,13 +142,12 @@ export function useSimulation() {
       if ((tickRef.current + 1) % HISTORY_INTERVAL === 0) {
         pushHistory({
           tick: tickRef.current + 1,
-          timestamp: Date.now(),
-          orgSpent: Object.values(teamUsage).reduce((a, b) => a + b, 0),
-          teamSpent: { ...teamUsage },
-          userSpent: Object.fromEntries(
-            Object.entries(userUsage).map(([id, u]) => [id, u.spentTokens])
-          ),
+          timestamp: tickToTimestamp(tickRef.current + 1),
+          orgNokDelta: accRef.current.org,
+          teamNokDelta: { ...accRef.current.team },
+          userNokDelta: { ...accRef.current.user },
         })
+        accRef.current = emptyAccumulator()
       }
     }, INTERVAL_MS[speed])
 
