@@ -5,8 +5,7 @@ import { fetchTeams, createTeam, updateTeam, deleteTeam } from '../services/team
 import { fetchUsers, createUser, updateUser, deleteUser } from '../services/userService'
 import type { SimulationProfile, UserRole } from '../types/org'
 import { tokensToCredits } from '../utils/cost'
-import { getPrimaryModel } from '../simulation/profiles'
-import { INCLUDED_CREDITS_PER_USER } from '../data/pricing'
+import { INCLUDED_CREDITS_PER_USER, type ModelId } from '../data/pricing'
 
 interface OrgState {
   organization: Organization | null
@@ -22,30 +21,39 @@ interface OrgState {
   loadAll: () => Promise<void>
 
   // Runtime usage (simulation engine writes here)
-  addUsage: (userId: string, tokens: number) => void
+  addUsage: (userId: string, tokens: number, modelId: ModelId) => void
   blockUser: (userId: string) => void
   resetUsage: () => void
 
   // Org mutations
-  setOrgBudget: (tokens: number) => Promise<void>
+  setOrgBudget: (credits: number) => Promise<void>
 
   // Team mutations
-  addTeam: (name: string, allocatedTokens: number, managerUserId: string | null) => Promise<void>
-  editTeam: (id: string, updates: Partial<Pick<Team, 'name' | 'allocatedTokens' | 'managerUserId'>>) => Promise<void>
+  addTeam: (name: string, allocatedCredits: number, managerUserId: string | null) => Promise<void>
+  editTeam: (id: string, updates: Partial<Pick<Team, 'name' | 'allocatedCredits' | 'managerUserId'>>) => Promise<void>
   removeTeam: (id: string) => Promise<void>
 
   // User mutations
   addUser: (teamId: string | null, name: string, role: UserRole, profile: SimulationProfile, quota: number) => Promise<void>
-  editUser: (id: string, updates: Partial<Pick<User, 'name' | 'teamId' | 'role' | 'simulationProfile' | 'quotaTokens' | 'isEnabled'>>) => Promise<void>
+  editUser: (id: string, updates: Partial<Pick<User, 'name' | 'teamId' | 'role' | 'simulationProfile' | 'quotaCredits' | 'isEnabled'>>) => Promise<void>
   removeUser: (id: string) => Promise<void>
 }
 
 function buildInitialUsage(users: User[], teams: Team[]): { teamUsage: TeamUsageMap; userUsage: UserUsageMap } {
   const teamUsage: TeamUsageMap = {}
   const userUsage: UserUsageMap = {}
-  teams.forEach(t => { teamUsage[t.id] = 0 })
+  teams.forEach(t => {
+    teamUsage[t.id] = { spentTokens: 0, spentCredits: 0, tokensByModel: {}, creditsByModel: {} }
+  })
   users.forEach(u => {
-    userUsage[u.id] = { spentTokens: 0, spentCredits: 0, overflowCredits: 0, isBlocked: false }
+    userUsage[u.id] = {
+      spentTokens: 0,
+      spentCredits: 0,
+      overflowCredits: 0,
+      tokensByModel: {},
+      creditsByModel: {},
+      isBlocked: false,
+    }
   })
   return { teamUsage, userUsage }
 }
@@ -74,35 +82,48 @@ export const useOrgStore = create<OrgState>((set, get) => ({
     }
   },
 
-  addUsage: (userId, tokens) => {
+  addUsage: (userId, tokens, modelId) => {
     const { users, userUsage, teamUsage, organization } = get()
     if (!organization) return
 
     const user = users.find(u => u.id === userId)
     if (!user || !userUsage[userId] || userUsage[userId].isBlocked) return
 
-    // Konverter tokens → kreditter basert på brukerens simuleringsmodell
-    const newCredits = tokensToCredits(tokens, getPrimaryModel(user.simulationProfile))
+    // Konverter tokens → kreditter basert på modellen trukket for denne hendelsen
+    const newCredits = tokensToCredits(tokens, modelId)
     const prevCredits = userUsage[userId].spentCredits
     const newSpentCredits = prevCredits + newCredits
 
     // Beregn overflow: kreditter utover inkludert kvote (3 900 kr)
     const newOverflow = Math.max(0, newSpentCredits - INCLUDED_CREDITS_PER_USER)
 
-    const newTeamUsage = user.teamId
-      ? { ...teamUsage, [user.teamId]: (teamUsage[user.teamId] ?? 0) + tokens }
-      : teamUsage
+    const prevUser = userUsage[userId]
+    const newUserUsage = {
+      ...prevUser,
+      spentTokens: prevUser.spentTokens + tokens,
+      spentCredits: newSpentCredits,
+      overflowCredits: newOverflow,
+      tokensByModel: { ...prevUser.tokensByModel, [modelId]: (prevUser.tokensByModel[modelId] ?? 0) + tokens },
+      creditsByModel: { ...prevUser.creditsByModel, [modelId]: (prevUser.creditsByModel[modelId] ?? 0) + newCredits },
+    }
+
+    let newTeamUsage = teamUsage
+    if (user.teamId && teamUsage[user.teamId]) {
+      const prevTeam = teamUsage[user.teamId]
+      newTeamUsage = {
+        ...teamUsage,
+        [user.teamId]: {
+          ...prevTeam,
+          spentTokens: prevTeam.spentTokens + tokens,
+          spentCredits: prevTeam.spentCredits + newCredits,
+          tokensByModel: { ...prevTeam.tokensByModel, [modelId]: (prevTeam.tokensByModel[modelId] ?? 0) + tokens },
+          creditsByModel: { ...prevTeam.creditsByModel, [modelId]: (prevTeam.creditsByModel[modelId] ?? 0) + newCredits },
+        },
+      }
+    }
 
     set({
-      userUsage: {
-        ...userUsage,
-        [userId]: {
-          ...userUsage[userId],
-          spentTokens: (userUsage[userId].spentTokens) + tokens,
-          spentCredits: newSpentCredits,
-          overflowCredits: newOverflow,
-        },
-      },
+      userUsage: { ...userUsage, [userId]: newUserUsage },
       teamUsage: newTeamUsage,
     })
   },
@@ -118,19 +139,25 @@ export const useOrgStore = create<OrgState>((set, get) => ({
     set(buildInitialUsage(users, teams))
   },
 
-  setOrgBudget: async (tokens) => {
+  setOrgBudget: async (credits) => {
     const { organization } = get()
     if (!organization) return
-    await updateOrganizationBudget(organization.id, tokens)
-    set({ organization: { ...organization, totalBudgetTokens: tokens } })
+    await updateOrganizationBudget(organization.id, credits)
+    set({ organization: { ...organization, totalBudgetCredits: credits } })
   },
 
-  addTeam: async (name, allocatedTokens, managerUserId) => {
+  addTeam: async (name, allocatedCredits, managerUserId) => {
     const { organization, teams, teamUsage } = get()
     if (!organization) return
-    const created = await createTeam(organization.id, name, allocatedTokens, managerUserId)
+    const created = await createTeam(organization.id, name, allocatedCredits, managerUserId)
     if (created) {
-      set({ teams: [...teams, created], teamUsage: { ...teamUsage, [created.id]: 0 } })
+      set({
+        teams: [...teams, created],
+        teamUsage: {
+          ...teamUsage,
+          [created.id]: { spentTokens: 0, spentCredits: 0, tokensByModel: {}, creditsByModel: {} },
+        },
+      })
     }
   },
 
@@ -156,7 +183,7 @@ export const useOrgStore = create<OrgState>((set, get) => ({
         users: [...users, created],
         userUsage: {
           ...userUsage,
-          [created.id]: { spentTokens: 0, spentCredits: 0, overflowCredits: 0, isBlocked: false },
+          [created.id]: { spentTokens: 0, spentCredits: 0, overflowCredits: 0, tokensByModel: {}, creditsByModel: {}, isBlocked: false },
         },
       })
     }

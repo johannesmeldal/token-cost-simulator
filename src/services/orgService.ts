@@ -5,7 +5,7 @@ import type { Organization } from '../types/org'
 interface DbOrganization {
   id: string
   name: string
-  total_budget_tokens: number
+  total_budget_credits: number
   currency: string
   tokens_per_nok: number
 }
@@ -14,7 +14,7 @@ function fromDb(row: DbOrganization): Organization {
   return {
     id: row.id,
     name: row.name,
-    totalBudgetTokens: row.total_budget_tokens,
+    totalBudgetCredits: row.total_budget_credits,
     currency: row.currency,
     tokensPerNok: row.tokens_per_nok,
   }
@@ -39,13 +39,13 @@ export async function fetchOrganization(): Promise<Organization> {
 
 export async function updateOrganizationBudget(
   id: string,
-  totalBudgetTokens: number
+  totalBudgetCredits: number
 ): Promise<void> {
   if (!isSupabaseConfigured) return
 
   const { error } = await supabase
     .from('organizations')
-    .update({ total_budget_tokens: totalBudgetTokens })
+    .update({ total_budget_credits: totalBudgetCredits })
     .eq('id', id)
 
   if (error) console.error('[orgService] Update failed:', error.message)

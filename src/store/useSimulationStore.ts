@@ -2,7 +2,9 @@ import { create } from 'zustand'
 import type { SimulationSpeed, SimulationEvent, HistoricalDataPoint } from '../types/simulation'
 
 const MAX_EVENTS = 100
-const MAX_HISTORY = 200
+// 10 ticks (HISTORY_INTERVAL) = 10 simulerte timer per punkt, så 2000 punkter
+// dekker over 2 simulerte år med historikk til dag/uke/måned/år-grafen.
+const MAX_HISTORY = 2000
 
 interface SimulationState {
   isRunning: boolean

@@ -9,7 +9,7 @@ interface DbUser {
   name: string
   role: UserRole
   simulation_profile: SimulationProfile
-  quota_tokens: number
+  quota_credits: number
   is_enabled: boolean
 }
 
@@ -21,7 +21,7 @@ function fromDb(row: DbUser): User {
     name: row.name,
     role: row.role,
     simulationProfile: row.simulation_profile,
-    quotaTokens: row.quota_tokens,
+    quotaCredits: row.quota_credits,
     isEnabled: row.is_enabled,
   }
 }
@@ -49,7 +49,7 @@ export async function createUser(
   name: string,
   role: UserRole,
   simulationProfile: SimulationProfile,
-  quotaTokens: number
+  quotaCredits: number
 ): Promise<User | null> {
   if (!isSupabaseConfigured) return null
 
@@ -61,7 +61,7 @@ export async function createUser(
       name,
       role,
       simulation_profile: simulationProfile,
-      quota_tokens: quotaTokens,
+      quota_credits: quotaCredits,
       is_enabled: true,
     })
     .select()
@@ -77,7 +77,7 @@ export async function createUser(
 
 export async function updateUser(
   id: string,
-  updates: Partial<Pick<User, 'name' | 'teamId' | 'role' | 'simulationProfile' | 'quotaTokens' | 'isEnabled'>>
+  updates: Partial<Pick<User, 'name' | 'teamId' | 'role' | 'simulationProfile' | 'quotaCredits' | 'isEnabled'>>
 ): Promise<void> {
   if (!isSupabaseConfigured) return
 
@@ -86,7 +86,7 @@ export async function updateUser(
   if (updates.teamId !== undefined) dbUpdates.team_id = updates.teamId
   if (updates.role !== undefined) dbUpdates.role = updates.role
   if (updates.simulationProfile !== undefined) dbUpdates.simulation_profile = updates.simulationProfile
-  if (updates.quotaTokens !== undefined) dbUpdates.quota_tokens = updates.quotaTokens
+  if (updates.quotaCredits !== undefined) dbUpdates.quota_credits = updates.quotaCredits
   if (updates.isEnabled !== undefined) dbUpdates.is_enabled = updates.isEnabled
 
   const { error } = await supabase.from('users').update(dbUpdates).eq('id', id)
