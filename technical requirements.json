@@ -205,7 +205,12 @@
       "rowLevelSecurity": "RLS deaktivert for dette demo-verktøyet — ingen innlogging, all data er åpen for demo-formål. Vurder å aktivere RLS om verktøyet driftes eksternt.",
       "seedData": {
         "description": "SQL seed-script som populerer Supabase med demo-data til workshops.",
-        "organization": { "name": "Avinor Digital", "total_budget_tokens": 10000000, "currency": "NOK", "tokens_per_nok": 10000 },
+        "organization": {
+          "name": "Digital Services",
+          "total_budget_tokens": 10000000,
+          "currency": "NOK",
+          "tokens_per_nok": 10000
+        },
         "teams": [
           { "name": "Platform Team", "allocated_tokens": 3000000 },
           { "name": "Passenger Experience", "allocated_tokens": 4000000 },

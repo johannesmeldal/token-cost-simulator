@@ -64,7 +64,7 @@ create table if not exists governance_policies (
 
 -- Organization
 insert into organizations (id, name, total_budget_tokens, currency, tokens_per_nok)
-values ('00000000-0000-0000-0000-000000000001', 'Avinor Digital', 10000000, 'NOK', 10000);
+values ('00000000-0000-0000-0000-000000000001', 'Digital Services', 10000000, 'NOK', 10000);
 
 -- Teams (manager_user_id filled in after users are inserted)
 insert into teams (id, organization_id, name, allocated_tokens)
